@@ -1,0 +1,1118 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="sand">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CHEPUH • Correlation & Stock Analytics Platform</title>
+    <link rel="icon" type="image/jpeg" href="/static/logo.jpg">
+    <!-- Google Fonts: Inter & JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- TradingView Lightweight Charts v4.2.0 CDN -->
+    <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+    <link rel="stylesheet" href="/static/style.css?v=20.0">
+</head>
+<body>
+
+    <!-- Global Top Navigation Bar (Logo, Clean Zero-Emoji, Multi-Theme Switcher) -->
+    <header class="global-header">
+        <div class="brand-section">
+            <img src="/static/logo.jpg" alt="CHEPUH Logo" class="brand-logo-img">
+            <span class="brand-title">CHEPUH</span>
+        </div>
+
+        <nav class="global-nav-tabs">
+            <button class="global-tab-btn active" data-target-view="viewCalculator" type="button">
+                <span>Калькулятор Correlation & Beta</span>
+            </button>
+            <button class="global-tab-btn" data-target-view="viewStockAnalytics" type="button">
+                <span>Графики и Анализ тикера</span>
+            </button>
+            <button class="global-tab-btn" data-target-view="viewDataLens" id="globalTabDataLens" type="button">
+                <span>Data</span>
+            </button>
+        </nav>
+
+        <div class="header-theme-selector">
+            <span class="theme-selector-label">Тема:</span>
+            <div class="theme-pills" id="themePillsContainer">
+                <button class="theme-pill active" data-theme="sand" type="button">Бежевый</button>
+                <button class="theme-pill" data-theme="blue" type="button">Синий</button>
+                <button class="theme-pill" data-theme="graphite" type="button">Графит</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- ============================================================
+         VIEW 1: CORRELATION & BETA CALCULATOR
+         ============================================================ -->
+    <main class="tab-view-container active" id="viewCalculator">
+        <div class="main-container">
+
+            <!-- Universe & Asset Setup -->
+            <section class="panel">
+                <div class="panel-header">
+                    <div>
+                        <div class="eyebrow-section">PORTFOLIO UNIVERSE SETUP</div>
+                        <h2>Universe & Asset Setup</h2>
+                        <p>Настройка групп активов, индивидуальных Custom Move (%) и базовых бенчмарков рынка</p>
+                    </div>
+
+                    <div class="panel-header-actions">
+                        <button id="bulkTickersButton" class="primary-small-button" type="button">
+                            Bulk Import (300+)
+                        </button>
+                        <button id="addGroupButton" class="secondary-button" type="button">
+                            + Добавить группу
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Groups Container (Empty by default) -->
+                <div id="groups" class="groups-container"></div>
+
+                <!-- Global Controls Grid -->
+                <div class="controls-grid">
+                    <div class="field">
+                        <label for="benchmark">
+                            Market Asset (Benchmark)
+                            <span class="field-required">*</span>
+                        </label>
+                        <input
+                            id="benchmark"
+                            placeholder="Например: SPY, QQQ, BTC..."
+                            value="SPY"
+                            autocomplete="off"
+                            autocapitalize="characters"
+                            spellcheck="false"
+                        >
+                        <span class="field-hint">Базовый актив или несколько через запятую (SPY, QQQ, SOXX)</span>
+                    </div>
+
+                    <div class="field">
+                        <label for="benchmarkMove">
+                            Expected Market Move (%)
+                            <span class="field-required">*</span>
+                        </label>
+                        <div class="percent-input">
+                            <input
+                                id="benchmarkMove"
+                                type="number"
+                                step="0.1"
+                                value="1.0"
+                                placeholder="1.0"
+                            >
+                            <span>%</span>
+                        </div>
+                        <span class="field-hint">Ожидаемое изменение базового актива</span>
+                    </div>
+
+                    <div class="field">
+                        <label for="period">Analysis Period</label>
+                        <select id="period">
+                            <option value="2w">2 недели</option>
+                            <option value="1m">1 месяц</option>
+                            <option value="3m">3 месяца</option>
+                            <option value="6m">6 месяцев</option>
+                            <option value="ytd">YTD</option>
+                            <option value="1y" selected>1 год</option>
+                            <option value="earnings_8q">8 отчетов (Earnings)</option>
+                            <option value="earnings_20q">20 отчетов (Earnings)</option>
+                            <option value="earnings_all">Все отчеты (Earnings)</option>
+                        </select>
+                        <span class="field-hint">Исторический период для выборки доходностей</span>
+                    </div>
+                </div>
+
+                <div class="calculate-wrapper">
+                    <button class="calculate-button" id="calculateButton" type="button">
+                        Рассчитать модели (Calculate)
+                    </button>
+                </div>
+
+                <div id="error" class="alert error-alert" style="display: none;"></div>
+                <div id="warning" class="alert warning-alert" style="display: none;">
+                    <div id="warningText" class="warning-text"></div>
+                    <button id="warningRemovePartialBtn" class="btn warning-remove-btn" type="button" style="display: none;">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                        <span id="warningRemovePartialText">Удалить неполные тикеры</span>
+                    </button>
+                </div>
+
+                <div id="loading" class="loading-overlay" style="display: none;">
+                    <div class="spinner"></div>
+                    <div class="loading-text">
+                        <strong>Расчет матриц корреляций и коэффициентов Beta...</strong>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Results Section (Screener + Matrices) -->
+            <section id="results" style="display: none;">
+                <!-- Primary Screener -->
+                <div class="panel" style="margin-bottom: 14px;">
+                    <div class="panel-header">
+                        <div>
+                            <h2>PRIMARY SCREENER</h2>
+                        </div>
+
+                        <div class="panel-header-actions">
+                            <button id="screenerRemovePartialBtn" class="action-btn" type="button" style="display: none;">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                                    <polyline points="3 6 5 6 21 6"></polyline>
+                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                </svg>
+                                <span>Убрать неполные (<span id="screenerPartialCount">0</span>)</span>
+                            </button>
+                            <button id="copyTickersButton" class="secondary-button" type="button">
+                                Копировать тикеры
+                            </button>
+                            <button id="exportAllButton" class="secondary-button" type="button">
+                                Скачать все (Excel)
+                            </button>
+                            <button id="exportFilteredButton" class="primary-small-button" type="button">
+                                Скачать выборку (.xlsx)
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="benchmarkTabsContainer" class="benchmark-tabs-container" style="display: none; margin-bottom: 10px;">
+                        <div id="benchmarkTabs" class="pill-group"></div>
+                    </div>
+
+                    <div class="screener-controls">
+                        <div class="filter-row">
+                            <div class="filter-field">
+                                <label for="correlationOperator">Условие</label>
+                                <select id="correlationOperator">
+                                    <option value="none">Без фильтров (все активы)</option>
+                                    <option value="gte" selected>≥ (Больше или равно)</option>
+                                    <option value="lte">≤ (Меньше или равно)</option>
+                                    <option value="between">Между [Min, Max]</option>
+                                    <option value="abs_gte">|r| ≥ (По модулю)</option>
+                                </select>
+                            </div>
+
+                            <div class="filter-field filter-number">
+                                <label for="correlationThreshold" id="thresholdMinLabel">Порог корреляции</label>
+                                <input
+                                    id="correlationThreshold"
+                                    type="number"
+                                    step="0.05"
+                                    min="-1"
+                                    max="1"
+                                    value="0.50"
+                                >
+                            </div>
+
+                            <div class="filter-field filter-number" id="thresholdMaxField" style="display: none;">
+                                <label for="correlationThresholdMax">Макс. порог</label>
+                                <input
+                                    id="correlationThresholdMax"
+                                    type="number"
+                                    step="0.05"
+                                    min="-1"
+                                    max="1"
+                                    value="1.00"
+                                >
+                            </div>
+
+                            <div class="filter-field filter-search">
+                                <label for="screenerSearch">Поиск тикера</label>
+                                <input
+                                    id="screenerSearch"
+                                    placeholder="Поиск тикера..."
+                                    autocomplete="off"
+                                >
+                            </div>
+
+                            <div class="filter-field filter-action">
+                                <button id="applyCorrelationFilter" class="secondary-button" type="button">
+                                    Применить
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="presets-row">
+                            <span class="preset-label">Пресеты:</span>
+                            <button class="preset-pill screener-preset" data-op="gte" data-val="0.70" type="button">Высокая (≥ 0.70)</button>
+                            <button class="preset-pill screener-preset active" data-op="gte" data-val="0.50" type="button">Умеренная (≥ 0.50)</button>
+                            <button class="preset-pill screener-preset" data-op="lte" data-val="0.30" type="button">Низкая (≤ 0.30)</button>
+                            <button class="preset-pill screener-preset" data-op="lte" data-val="0.00" type="button">Обратная (≤ 0.00)</button>
+                            <button class="preset-pill screener-preset" data-op="lte" data-val="-0.50" type="button">Сильная обратная (≤ -0.50)</button>
+                            <button class="preset-pill screener-preset" data-op="all" data-val="all" type="button">Все активы</button>
+                        </div>
+
+                        <div class="screener-status-bar">
+                            <div class="match-badge">
+                                <span>Найдено: <strong id="benchmarkResultCount">0</strong> <span id="benchmarkResultTotal">/ 0</span></span>
+                                <span id="activeFilterBadge" class="filter-badge-pill">r ≥ 0.50</span>
+                            </div>
+
+                            <div class="pagination-size">
+                                <label for="pageSizeSelect">На странице:</label>
+                                <select id="pageSizeSelect">
+                                    <option value="25">25</option>
+                                    <option value="50" selected>50</option>
+                                    <option value="100">100</option>
+                                    <option value="300">300</option>
+                                    <option value="all">Все</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="table-wrapper">
+                        <table class="data-table" id="mainBenchmarkTable">
+                            <thead id="benchmarkTableHead">
+                                <tr>
+                                    <th data-sort="ticker" class="sortable-th tooltip-header" data-tooltip-title="Ticker" data-tooltip-text="Тикер анализируемого актива.">
+                                        Ticker <span class="sort-icon">⇅</span>
+                                    </th>
+                                    <th data-sort="correlation" class="sortable-th tooltip-header" data-tooltip-title="Correlation" data-tooltip-text="Коэффициент корреляции Пирсона между активом и Market Asset за выбранный период (от -1.0 до +1.0).">
+                                        Correlation <span class="sort-icon">▼</span>
+                                    </th>
+                                    <th data-sort="beta" class="sortable-th tooltip-header" data-tooltip-title="Beta" data-tooltip-text="Насколько сильно актив исторически двигался относительно Market Asset. Рассчитывается как Covariance(Asset, Market) ÷ Variance(Market).">
+                                        Beta <span class="sort-icon">⇅</span>
+                                    </th>
+                                    <th data-sort="expected_move" class="sortable-th tooltip-header" data-tooltip-title="Expected Move" data-tooltip-text="Расчётное движение акции по формуле: Market Move × Beta. Например: SPY +0.8% × Beta 2.25 = ожидаемое движение +1.8%.">
+                                        Expected Move <span class="sort-icon">⇅</span>
+                                    </th>
+                                    <th data-sort="actual_move" class="sortable-th tooltip-header" data-tooltip-title="Actual Move" data-tooltip-text="Фактическое движение актива, введённое пользователем индивидуально для этого тикера.">
+                                        Actual Move <span class="sort-icon">⇅</span>
+                                    </th>
+                                    <th data-sort="difference" class="sortable-th tooltip-header" data-tooltip-title="Difference" data-tooltip-text="Разница между фактическим и ожидаемым движением: Actual Move − Expected Move. Положительное = сильнее ожидания, отрицательное = слабее.">
+                                        Difference <span class="sort-icon">⇅</span>
+                                    </th>
+                                    <th data-sort="normalized" class="sortable-th tooltip-header" data-tooltip-title="Normalized Difference" data-tooltip-text="Показывает, насколько Difference велик относительно обычной дневной волатильности акции. Формула: Difference ÷ Volatility. Например -0.20 означает, что отклонение составляет -0.2σ.">
+                                        Normalized <span class="sort-icon">⇅</span>
+                                    </th>
+                                    <th data-sort="volatility" class="sortable-th tooltip-header" data-tooltip-title="Daily Volatility" data-tooltip-text="Историческая close-to-close дневная волатильность актива. Рассчитывается как стандартное отклонение дневных доходностей.">
+                                        Daily Vol <span class="sort-icon">⇅</span>
+                                    </th>
+                                    <th data-sort="residual_volatility" class="sortable-th tooltip-header" data-tooltip-title="Residual Volatility" data-tooltip-text="Волатильность той части движения акции, которую Beta + движение benchmark не объясняют (отклонение от beta-модели).">
+                                        Residual Vol <span class="sort-icon">⇅</span>
+                                    </th>
+                                    <th data-sort="observations" class="sortable-th tooltip-header" data-tooltip-title="Observations" data-tooltip-text="Количество совместных торговых наблюдений (дней), использованных для расчёта.">
+                                        Obs <span class="sort-icon">⇅</span>
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody id="benchmarkResultsTable">
+                                <tr>
+                                    <td colspan="10" class="loading-cell">Нет данных. Выполните расчет моделей выше.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div id="screenerPagination" class="table-pagination">
+                        <div class="pagination-info" id="screenerPaginationInfo">Показано 0-0 из 0</div>
+                        <div class="pagination-controls">
+                            <button id="screenerPrevBtn" class="page-btn" type="button" disabled>&lt; Назад</button>
+                            <span id="screenerPageNumbers" class="page-numbers">Стр. 1 из 1</span>
+                            <button id="screenerNextBtn" class="page-btn" type="button" disabled>Вперед &gt;</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Matrix 1: Correlation Matrix (Pearson) -->
+                <div class="panel" style="margin-bottom: 14px;">
+                    <div class="panel-header">
+                        <div>
+                            <h2>Matrix Correlation Pearson</h2>
+                        </div>
+                        <div class="panel-header-actions">
+                            <button class="corr-action-btn corr-export-btn" id="exportMatrixCorrExcelBtn" type="button" title="Экспорт матрицы корреляций Пирсона в Excel (.xlsx)">
+                                Экспорт
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="matrix-controls">
+                        <div class="filter-row">
+                            <div class="filter-field">
+                                <label for="matrixOperator">Условие подсветки</label>
+                                <select id="matrixOperator">
+                                    <option value="none" selected>Без фильтров (все активы)</option>
+                                    <option value="gte">≥ (Больше или равно)</option>
+                                    <option value="lte">≤ (Меньше или равно)</option>
+                                    <option value="abs_gte">|r| ≥ (По модулю)</option>
+                                </select>
+                            </div>
+
+                            <div class="filter-field filter-number">
+                                <label for="matrixThreshold">Порог r</label>
+                                <input
+                                    id="matrixThreshold"
+                                    type="number"
+                                    step="0.05"
+                                    min="-1"
+                                    max="1"
+                                    value="0.50"
+                                >
+                            </div>
+
+                            <div class="filter-field filter-search">
+                                <label for="matrixSearch">Поиск тикера</label>
+                                <input
+                                    id="matrixSearch"
+                                    placeholder="Поиск в матрице..."
+                                    autocomplete="off"
+                                >
+                            </div>
+
+                            <div class="filter-field filter-action">
+                                <button id="applyMatrixFilterBtn" class="secondary-button" type="button">
+                                    Применить
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="presets-row">
+                            <span class="preset-label">Пресеты:</span>
+                            <button class="preset-pill matrix-preset" data-op="gte" data-val="0.70" type="button">Высокая (≥ 0.70)</button>
+                            <button class="preset-pill matrix-preset active" data-op="gte" data-val="0.50" type="button">Умеренная (≥ 0.50)</button>
+                            <button class="preset-pill matrix-preset" data-op="lte" data-val="0.30" type="button">Низкая (≤ 0.30)</button>
+                            <button class="preset-pill matrix-preset" data-op="lte" data-val="0.00" type="button">Обратная (≤ 0.00)</button>
+                            <button class="preset-pill matrix-preset" data-op="all" data-val="all" type="button">Все ячейки</button>
+                        </div>
+
+                        <div class="screener-status-bar">
+                            <div class="match-badge">
+                                <span>Отображается: <strong id="matrixMatchCount">0</strong> <span id="matrixMatchTotal">/ 0 активов</span></span>
+                                <span id="matrixActiveFilterBadge" class="filter-badge-pill">r ≥ 0.50</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="matrix-wrapper">
+                        <table id="correlationMatrix" class="matrix"></table>
+                    </div>
+                </div>
+
+                <!-- Matrix 2: Beta Coefficients Matrix -->
+                <div class="panel">
+                    <div class="panel-header">
+                        <div>
+                            <h2>Matrix Beta (formul Slope)</h2>
+                        </div>
+                        <div class="panel-header-actions">
+                            <button class="corr-action-btn corr-export-btn" id="exportMatrixBetaExcelBtn" type="button" title="Экспорт матрицы коэффициентов Beta в Excel (.xlsx)">
+                                Экспорт
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="matrix-controls">
+                        <div class="filter-row">
+                            <div class="filter-field">
+                                <label for="matrixBetaOperator">Условие подсветки</label>
+                                <select id="matrixBetaOperator">
+                                    <option value="none" selected>Без фильтров (все активы)</option>
+                                    <option value="gte">≥ (Больше или равно)</option>
+                                    <option value="lte">≤ (Меньше или равно)</option>
+                                </select>
+                            </div>
+
+                            <div class="filter-field filter-number">
+                                <label for="matrixBetaThreshold">Порог Beta</label>
+                                <input
+                                    id="matrixBetaThreshold"
+                                    type="number"
+                                    step="0.1"
+                                    min="-20"
+                                    max="50"
+                                    value="1.0"
+                                >
+                            </div>
+
+                            <div class="filter-field filter-search">
+                                <label for="matrixBetaSearch">Поиск тикера</label>
+                                <input
+                                    id="matrixBetaSearch"
+                                    placeholder="Поиск в матрице Beta..."
+                                    autocomplete="off"
+                                >
+                            </div>
+
+                            <div class="filter-field filter-action">
+                                <button id="applyMatrixBetaFilterBtn" class="secondary-button" type="button">
+                                    Применить
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="presets-row">
+                            <span class="preset-label">Пресеты:</span>
+                            <button class="preset-pill matrix-beta-preset" data-op="gte" data-val="1.5" type="button">High Beta (≥ 1.5)</button>
+                            <button class="preset-pill matrix-beta-preset active" data-op="gte" data-val="1.0" type="button">Moderate (≥ 1.0)</button>
+                            <button class="preset-pill matrix-beta-preset" data-op="lte" data-val="0.8" type="button">Low Beta (≤ 0.8)</button>
+                            <button class="preset-pill matrix-beta-preset" data-op="lte" data-val="0.0" type="button">Inverse (≤ 0.0)</button>
+                            <button class="preset-pill matrix-beta-preset" data-op="all" data-val="all" type="button">Все активы</button>
+                        </div>
+
+                        <div class="screener-status-bar">
+                            <div class="match-badge">
+                                <span>Отображается: <strong id="matrixBetaMatchCount">0</strong> <span id="matrixBetaMatchTotal">/ 0 активов</span></span>
+                                <span id="matrixBetaActiveFilterBadge" class="filter-badge-pill">β ≥ 1.0</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="matrix-wrapper">
+                        <table id="betaMatrix" class="matrix"></table>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- ============================================================
+         VIEW 2: STOCK & EARNINGS CHART ANALYTICS (FINWHALE)
+         ============================================================ -->
+    <main class="tab-view-container" id="viewStockAnalytics">
+        <div class="main-container">
+
+            <!-- FinWhale Stock Top Bar -->
+            <div class="stock-top-bar">
+                <div class="stock-search-group">
+                    <span class="active-symbol-badge" id="stockViewSymbolBadge">AAPL</span>
+
+                    <div class="search-input-box">
+                        <input type="text" id="tickerInput" placeholder="Поиск тикера (AAPL, NVDA...)" autocomplete="off" value="AAPL" autocapitalize="characters" spellcheck="false">
+                        <div id="tickerDropdown" class="ticker-dropdown hidden"></div>
+                    </div>
+
+                    <button id="searchBtn" class="btn btn-primary" type="button">Анализ</button>
+                </div>
+
+                <div class="stock-controls-group">
+                    <div class="date-indicator-pill" id="stockDateIndicator">
+                        <span id="currentDateText">2026-09-02</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Company Profile Card -->
+            <section class="company-card card" id="companyCard">
+                <div class="company-header-row">
+                    <div class="company-title-block">
+                        <div class="company-meta">
+                            <div class="ticker-symbol-row">
+                                <h1 class="ticker-symbol" id="profileSymbol">AAPL</h1>
+                                <span class="ticker-exchange" id="profileExchange">NASDAQ</span>
+                                <span class="ticker-price" id="profilePrice">$325.13</span>
+                            </div>
+                            <div class="company-name" id="profileName">Apple Inc.</div>
+                        </div>
+                    </div>
+
+                    <div class="company-stats-grid">
+                        <div class="stat-pill">
+                            <span class="stat-lbl">СЕКТОР</span>
+                            <span class="stat-val" id="profileSector">Technology</span>
+                        </div>
+                        <div class="stat-pill">
+                            <span class="stat-lbl">ИНДУСТРИЯ</span>
+                            <span class="stat-val" id="profileIndustry">Consumer Electronics</span>
+                        </div>
+                        <div class="stat-pill">
+                            <span class="stat-lbl">КАПИТАЛИЗАЦИЯ</span>
+                            <span class="stat-val" id="profileMktCap">$4.78T</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="company-description-box">
+                    <div class="desc-header">
+                        <span class="desc-title">ОПИСАНИЕ ДЕЯТЕЛЬНОСТИ КОМПАНИИ</span>
+                    </div>
+                    <p class="desc-text" id="profileDescRu">
+                        Загрузка описания компании...
+                    </p>
+                </div>
+
+                <div class="peers-categorized-grid">
+                    <div class="peers-group">
+                        <div class="peers-group-header">
+                            <div class="peers-header-title-block">
+                                <span class="peers-group-title">Коррелируют из их индустрии (r ≥ 0.60)</span>
+                                <span class="peers-hint-sub">Связанные активы сектора</span>
+                            </div>
+                            <span class="peers-group-sub" id="industryCorrCount">Высокая связность</span>
+                        </div>
+                        <div class="peers-chips-row" id="industryCorrList">
+                            <span class="peers-placeholder">Расчет корреляций...</span>
+                        </div>
+                    </div>
+
+                    <div class="peers-group">
+                        <div class="peers-group-header">
+                            <div class="peers-header-title-block">
+                                <span class="peers-group-title">Максимально похожий бизнес</span>
+                                <span class="peers-hint-sub">Прямые конкуренты (Direct Peers)</span>
+                            </div>
+                            <span class="peers-group-sub">Конкуренты</span>
+                        </div>
+                        <div class="peers-chips-row" id="businessPeersList">
+                            <span class="peers-placeholder">Загрузка конкурентов...</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Dual Chart Workspace (FinWhale Dual TradingView Charts) -->
+            <section class="charts-section">
+                <!-- Chart 1: Daily Chart -->
+                <div class="chart-card card" id="dailyChartCard">
+                    <div class="chart-wrapper" id="dailyChartWrapper">
+                        <!-- Floating Controls Toolbar -->
+                        <div class="chart-floating-toolbar">
+                            <button id="toggleDailyVolBtn" class="chart-tool-btn chart-float-btn active" type="button" title="Вкл/выкл индикатор объема (VOL)">VOL</button>
+                        </div>
+
+                        <!-- Floating Daily HUD Card -->
+                        <div id="dailyHudCard" class="chart-hud-card">
+                            <div class="hud-header" id="hudHeaderTitle"><span id="hudTicker">AAPL</span> - <span id="hudDate">MAR 4, 2025</span></div>
+                            <div class="hud-ohlc-grid">
+                                <div class="hud-cell"><span class="hud-lbl">O</span> <span class="hud-val" id="hudOpen">--</span></div>
+                                <div class="hud-cell"><span class="hud-lbl">H</span> <span class="hud-val" id="hudHigh">--</span></div>
+                                <div class="hud-cell"><span class="hud-lbl">L</span> <span class="hud-val" id="hudLow">--</span></div>
+                                <div class="hud-cell"><span class="hud-lbl">C</span> <span class="hud-val" id="hudClose">--</span></div>
+                            </div>
+                            <div class="hud-metrics-list">
+                                <div class="hud-metric-row"><span class="hud-lbl">VOL</span> <span class="hud-val" id="hudVol">--</span></div>
+                            </div>
+                        </div>
+
+                        <!-- FinWhale Delicate Green Laser Selection Line -->
+                        <div id="dailySelectionLine" class="daily-selection-line"></div>
+
+                        <!-- TradingView Measure Tool (Date & Price Range Ruler) -->
+                        <svg id="dailyRulerSvg" class="chart-ruler-svg hidden" style="display: none;">
+                            <rect class="chart-ruler-rect" />
+                            <line class="chart-ruler-line" />
+                            <circle class="chart-ruler-dot" r="3.5" />
+                            <circle class="chart-ruler-dot" r="3.5" />
+                        </svg>
+                        <div id="dailyRulerBadge" class="chart-ruler-badge hidden" style="display: none;">
+                            <div class="ruler-badge-main">
+                                <span class="ruler-pct positive">0.00%</span>
+                                <span class="ruler-diff positive">(+0.00)</span>
+                                <button class="ruler-close-btn" type="button" title="Убрать линейку (Esc / клик)" aria-label="Закрыть">×</button>
+                            </div>
+                            <div class="ruler-badge-sub">
+                                <span class="ruler-sub-item ruler-stat">0 баров, 0д</span>
+                                <span class="ruler-sub-item ruler-prices">0.00 → 0.00</span>
+                            </div>
+                        </div>
+
+                        <div id="dailyChartContainer" class="chart-container"></div>
+                        <div id="eventTooltip" class="event-tooltip hidden"></div>
+                    </div>
+                </div>
+
+                <!-- Interactive Chart Vertical Resizer Splitter -->
+                <div class="chart-resizer" id="chartResizer" title="Потяните вверх или вниз для изменения высоты графиков (Двойной клик — сброс 50/50)">
+                    <div class="chart-resizer-line"></div>
+                    <div class="chart-resizer-handle">
+                        <span class="chart-resizer-grip"></span>
+                    </div>
+                    <div class="chart-resizer-line"></div>
+                </div>
+
+                <!-- Chart 2: Intraday Chart -->
+                <div class="chart-card card" id="intradayChartCard">
+                    <div class="chart-wrapper" id="intradayChartWrapper">
+                        <!-- Hidden keeper for active intraday date to preserve JS compatibility -->
+                        <span id="activeIntradayDate" style="display: none;">--</span>
+
+                        <!-- Floating Controls Toolbar -->
+                        <div class="chart-floating-toolbar">
+                            <button id="toggleIntradayVolBtn" class="chart-tool-btn chart-float-btn active" type="button" title="Вкл/выкл индикатор объема (VOL)">VOL</button>
+                        </div>
+
+                        <!-- TradingView Measure Tool (Date & Price Range Ruler) -->
+                        <svg id="intradayRulerSvg" class="chart-ruler-svg hidden" style="display: none;">
+                            <rect class="chart-ruler-rect" />
+                            <line class="chart-ruler-line" />
+                            <circle class="chart-ruler-dot" r="3.5" />
+                            <circle class="chart-ruler-dot" r="3.5" />
+                        </svg>
+                        <div id="intradayRulerBadge" class="chart-ruler-badge hidden" style="display: none;">
+                            <div class="ruler-badge-main">
+                                <span class="ruler-pct positive">0.00%</span>
+                                <span class="ruler-diff positive">(+0.00)</span>
+                                <button class="ruler-close-btn" type="button" title="Убрать линейку (Esc / клик)" aria-label="Закрыть">×</button>
+                            </div>
+                            <div class="ruler-badge-sub">
+                                <span class="ruler-sub-item ruler-stat">0 баров, 0мин</span>
+                                <span class="ruler-sub-item ruler-prices">0.00 → 0.00</span>
+                            </div>
+                        </div>
+
+                        <div id="intradayChartContainer" class="chart-container"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Bottom Analytics Workspace -->
+            <section class="analytics-workspace card">
+                <div class="tab-nav">
+                    <button class="tab-btn active" data-tab="earningsTab" type="button">Реакция на отчеты (Earnings Moves)</button>
+                    <button class="tab-btn" data-tab="dividendsTab" type="button">История дивидендов</button>
+                </div>
+
+                <!-- Tab 1: Earnings Reaction Matrix -->
+                <div class="tab-content active" id="earningsTab">
+                    <div class="tab-controls-row">
+                        <div class="tab-title-text">
+                            <h3>Матрица движений на отчетности (Последние 8 кварталов)</h3>
+                        </div>
+                        <div class="earnings-actions-row">
+                            <div class="interval-filters">
+                                <span class="filter-lbl">Метрика по умолчанию:</span>
+                                <div class="pill-group" id="earningsGlobalMetricPills">
+                                    <button class="pill-btn active" data-metric="close_to_close" type="button">Весь день (Close-to-Close)</button>
+                                    <button class="pill-btn" data-metric="premarket" type="button">Премаркет</button>
+                                    <button class="pill-btn" data-metric="intraday" type="button">Интрадей</button>
+                                    <button class="pill-btn" data-metric="postmarket" type="button">Постмаркет</button>
+                                </div>
+                            </div>
+                            <button id="exportEarningsExcelBtn" class="btn secondary-button export-btn" type="button" title="Экспорт матрицы в Excel (.xlsx)">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: -2px; margin-right: 4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                <span>Экспорт</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="table-wrapper">
+                        <table class="data-table" id="earningsTable">
+                            <thead>
+                                <tr>
+                                    <th>Квартал</th>
+                                    <th>Дата отчета</th>
+                                    <th>Сессия</th>
+                                    <th>EPS Факт / Ожид.</th>
+                                    <th>Сюрприз EPS</th>
+                                    <th>Выручка Факт / Ожид.</th>
+                                    <th class="metric-th-col">
+                                        <div class="th-metric-box">
+                                            <span class="th-day-lbl">R-1</span>
+                                            <select class="th-metric-select" id="metricSel_RMinus1" title="Метрика для R-1">
+                                                <option value="close_to_close">Весь день</option>
+                                                <option value="premarket">Премаркет</option>
+                                                <option value="intraday">Интрадей</option>
+                                                <option value="postmarket" selected>Постмаркет</option>
+                                            </select>
+                                        </div>
+                                    </th>
+                                    <th class="metric-th-col">
+                                        <div class="th-metric-box">
+                                            <span class="th-day-lbl">R</span>
+                                            <select class="th-metric-select" id="metricSel_R0" title="Метрика для R">
+                                                <option value="close_to_close" selected>Весь день</option>
+                                                <option value="premarket">Премаркет</option>
+                                                <option value="intraday">Интрадей</option>
+                                                <option value="postmarket">Постмаркет</option>
+                                            </select>
+                                        </div>
+                                    </th>
+                                    <th class="metric-th-col">
+                                        <div class="th-metric-box">
+                                            <span class="th-day-lbl">R+1</span>
+                                            <select class="th-metric-select" id="metricSel_RPlus1" title="Метрика для R+1">
+                                                <option value="close_to_close" selected>Весь день</option>
+                                                <option value="premarket">Премаркет</option>
+                                                <option value="intraday">Интрадей</option>
+                                                <option value="postmarket">Постмаркет</option>
+                                            </select>
+                                        </div>
+                                    </th>
+                                    <th class="metric-th-col">
+                                        <div class="th-metric-box">
+                                            <span class="th-day-lbl">R+2</span>
+                                            <select class="th-metric-select" id="metricSel_RPlus2" title="Метрика для R+2">
+                                                <option value="close_to_close" selected>Весь день</option>
+                                                <option value="premarket">Премаркет</option>
+                                                <option value="intraday">Интрадей</option>
+                                                <option value="postmarket">Постмаркет</option>
+                                            </select>
+                                        </div>
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody id="earningsTableBody">
+                                <tr><td colspan="10" class="loading-cell">Загрузка данных по отчетам...</td></tr>
+                            </tbody>
+                            <tfoot id="earningsTableFoot"></tfoot>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Tab 3: Dividends -->
+                <div class="tab-content" id="dividendsTab">
+                    <div class="tab-controls-row">
+                        <div class="tab-title-text">
+                            <h3>История дивидендных выплат</h3>
+                        </div>
+                    </div>
+
+                    <div class="table-wrapper">
+                        <table class="data-table" id="dividendsTable">
+                            <thead>
+                                <tr>
+                                    <th>Дата отсечки (Ex-Date)</th>
+                                    <th>Размер дивиденда ($)</th>
+                                    <th>Дата выплаты (Pay Date)</th>
+                                    <th>Дата фиксации (Record Date)</th>
+                                    <th>Дивидендная доходность (%)</th>
+                                    <th>Периодичность</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dividendsTableBody">
+                                <tr><td colspan="6" class="loading-cell">Загрузка дивидендов...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- ============================================================
+         VIEW 3: DATALENS (Comparative Stock Return Matrix & Heatmap)
+         ============================================================ -->
+    <main class="tab-view-container" id="viewDataLens">
+        <div class="datalens-wrapper">
+            <!-- Data Top Session Header -->
+            <div class="datalens-header-bar">
+                <div class="datalens-brand-box">
+                    <span class="datalens-icon-bracket">[~]</span>
+                    <span class="datalens-brand-name">[ DATA ]</span>
+                </div>
+
+                <div class="datalens-top-actions">
+                    <div class="datalens-dropdown-wrap">
+                        <button class="datalens-btn-ghost" id="datalensExportToggleBtn" type="button">
+                            Export ▾
+                        </button>
+                        <div class="datalens-dropdown-menu" id="datalensExportMenu" style="display: none;">
+                            <button type="button" id="datalensExportCsvBtn">Export as CSV</button>
+                            <button type="button" id="datalensExportExcelBtn">Export as Excel</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Ticker Chips & Timeframe Controls Bar -->
+            <div class="datalens-controls-bar">
+                <div class="datalens-tickers-strip">
+                    <div class="datalens-chips-list" id="datalensChipsList">
+                        <!-- Populated dynamically -->
+                    </div>
+
+                    <div class="datalens-add-ticker-wrap">
+                        <input
+                            type="text"
+                            id="datalensTickerInput"
+                            class="datalens-ticker-input"
+                            placeholder="+ Add ticker"
+                            autocomplete="off"
+                            spellcheck="false"
+                            maxlength="10"
+                        >
+                        <button type="button" id="datalensAddTickerBtn" class="datalens-ticker-add-btn">+</button>
+                    </div>
+
+                    <span class="datalens-ticker-counter" id="datalensTickerCounter">0/100</span>
+                </div>
+
+                <div class="datalens-tf-metric-strip">
+                    <div class="datalens-tf-pills" id="datalensTfPills">
+                        <button class="datalens-tf-btn" data-period="1w" type="button">1W</button>
+                        <button class="datalens-tf-btn" data-period="1m" type="button">1M</button>
+                        <button class="datalens-tf-btn" data-period="3m" type="button">3M</button>
+                        <button class="datalens-tf-btn" data-period="6m" type="button">6M</button>
+                        <button class="datalens-tf-btn" data-period="ytd" type="button">YTD</button>
+                        <button class="datalens-tf-btn active" data-period="1y" type="button">1Y</button>
+                        <button class="datalens-tf-btn" data-period="2y" type="button">2Y</button>
+                        <button class="datalens-tf-btn" data-period="5y" type="button">5Y</button>
+                        <button class="datalens-tf-btn" data-period="max" type="button">MAX</button>
+                        <button class="datalens-tf-btn" data-period="custom" type="button" id="datalensCustomTfBtn">Custom</button>
+                    </div>
+
+                    <div class="datalens-metric-wrapper">
+                        <select id="datalensMetricSelect" class="datalens-metric-select">
+                            <option value="cls2cls" selected>Close to Close %</option>
+                            <option value="intra">Intra %</option>
+                            <option value="gap">Gap %</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Filters Bar -->
+            <div class="datalens-filters-bar">
+                <div class="datalens-filters-left">
+                    <span class="datalens-filter-count-badge" id="datalensFilterCountBadge">FILTERS (1)</span>
+                    <div class="datalens-filter-chips" id="datalensFilterChips">
+                        <!-- Populated dynamically: e.g. MU Close% |x| >= 2 x -->
+                    </div>
+                    <button class="datalens-add-filter-chip-btn" id="datalensAddFilterBtn" type="button">+ Add Filter</button>
+                </div>
+
+                <div class="datalens-filters-hint">
+                    CLICK CHIP TO EDIT • FUNNEL IN COLUMN TO ADD
+                </div>
+            </div>
+
+            <!-- Custom Date Range Picker Strip (Hidden by default) -->
+            <div class="datalens-custom-range-bar" id="datalensCustomRangeBar" style="display: none;">
+                <span class="custom-range-label">Диапазон дат:</span>
+                <label>От <input type="date" id="datalensCustomStart" class="datalens-date-input"></label>
+                <label>До <input type="date" id="datalensCustomEnd" class="datalens-date-input"></label>
+                <button type="button" id="datalensApplyCustomRange" class="primary-small-button">Применить</button>
+                <button type="button" id="datalensCancelCustomRange" class="secondary-button">Отмена</button>
+            </div>
+
+            <!-- Main Data Table Container -->
+            <div class="datalens-table-card">
+                <div class="datalens-loading-overlay" id="datalensLoadingOverlay" style="display: none;">
+                    <div class="spinner"></div>
+                    <div class="loading-text">Загрузка данных Data...</div>
+                </div>
+
+                <div class="datalens-table-scroll-wrap">
+                    <table class="datalens-table" id="datalensTable">
+                        <thead id="datalensThead">
+                            <!-- Populated dynamically: DATE, SPY ▽, QQQ ▽, MU ▽ -->
+                        </thead>
+                        <tbody id="datalensTbody">
+                            <!-- Populated dynamically with % change rows & heatmap -->
+                        </tbody>
+                        <tfoot id="datalensTfoot">
+                            <!-- Populated dynamically: COUNT, MEAN, MEDIAN, STD DEV, MIN, MAX -->
+                        </tfoot>
+                    </table>
+                </div>
+
+                <div id="datalensEmptyState" class="datalens-empty-state">
+                    <p id="datalensEmptyStateText">Добавьте тикеры через «+ Add ticker», чтобы отобразить таблицу данных.</p>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- DataLens Filter Popover / Modal (Exact layout as photo) -->
+    <div id="datalensFilterModalBackdrop" class="modal-backdrop" aria-hidden="true" style="display: none;">
+        <div class="datalens-filter-modal" id="datalensFilterModal">
+            <div class="datalens-modal-header">
+                <div class="modal-title-row">
+                    <span class="modal-title-label">FILTER SCOPE</span>
+                    <span class="modal-scope-chip" id="modalScopeTickerBadge">[MU]</span>
+                    <select id="modalScopeTickerSelect" class="modal-scope-select" style="display: none;"></select>
+                </div>
+                <button type="button" class="modal-close" id="closeDatalensFilterModal">✕</button>
+            </div>
+
+            <div class="datalens-modal-body">
+                <!-- Step 1: Filter Type -->
+                <div class="filter-modal-step">
+                    <div class="step-label">1. FILTER TYPE</div>
+                    <div class="step-options-row" id="filterTypeOptions">
+                        <button type="button" class="filter-pill-btn active" data-type="Earnings">Earnings</button>
+                        <button type="button" class="filter-pill-btn" data-type="Ex-Div">Ex-Div</button>
+                        <button type="button" class="filter-pill-btn" data-type="Pay Date">Pay Date</button>
+                        <button type="button" class="filter-pill-btn" data-type="Quantitative">Quantitative</button>
+                        <button type="button" class="filter-pill-btn" data-type="HoldMove">Hold Move</button>
+                    </div>
+                </div>
+
+                <!-- Step 2: Offset (For Earnings, exact as photo) -->
+                <div class="filter-modal-step" id="filterEarningsOffsetStep" style="display: block;">
+                    <div class="step-label">2. OFFSET</div>
+                    <div class="step-options-row" id="filterOffsetOptions">
+                        <button type="button" class="filter-pill-btn" data-offset="R-1">R-1</button>
+                        <button type="button" class="filter-pill-btn active" data-offset="R">R</button>
+                        <button type="button" class="filter-pill-btn" data-offset="R+1">R+1</button>
+                        <button type="button" class="filter-pill-btn" data-offset="R+2">R+2</button>
+                    </div>
+                </div>
+
+                <!-- Step 2: Column (For Quantitative) -->
+                <div class="filter-modal-step" id="filterColumnStep" style="display: none;">
+                    <div class="step-label">2. COLUMN</div>
+                    <div class="step-options-row" id="filterColOptions">
+                        <button type="button" class="filter-pill-btn active" data-col="cls2cls">Close%</button>
+                        <button type="button" class="filter-pill-btn" data-col="intra">Intra%</button>
+                        <button type="button" class="filter-pill-btn" data-col="gap">Gap%</button>
+                    </div>
+                </div>
+
+                <!-- Step 3: Operator (For Quantitative) -->
+                <div class="filter-modal-step" id="filterOperatorStep" style="display: none;">
+                    <div class="step-label">3. OPERATOR</div>
+                    <div class="step-options-row" id="filterOpOptions">
+                        <button type="button" class="filter-pill-btn" data-op="gte">≥</button>
+                        <button type="button" class="filter-pill-btn" data-op="lte">≤</button>
+                        <button type="button" class="filter-pill-btn active" data-op="abs_gte">|x| ≥</button>
+                        <button type="button" class="filter-pill-btn" data-op="abs_lte">|x| ≤</button>
+                    </div>
+                </div>
+
+                <!-- Step 4: Value (For Quantitative) -->
+                <div class="filter-modal-step" id="filterValueStep" style="display: none;">
+                    <div class="step-label">4. VALUE</div>
+                    <div class="filter-number-input-wrap">
+                        <input
+                            type="number"
+                            id="filterModalValueInput"
+                            class="filter-number-input"
+                            value="2"
+                            step="0.5"
+                        >
+                    </div>
+                </div>
+
+                <!-- Steps for HoldMove Filter -->
+                <div class="filter-modal-step" id="filterHoldMoveDirectionStep" style="display: none;">
+                    <div class="step-label">2. DIRECTION</div>
+                    <div class="step-options-row" id="filterHoldDirectionOptions">
+                        <button type="button" class="filter-pill-btn active" data-dir="both">Both (±1%)</button>
+                        <button type="button" class="filter-pill-btn" data-dir="up">Long (+1%)</button>
+                        <button type="button" class="filter-pill-btn" data-dir="down">Short (-1%)</button>
+                    </div>
+                </div>
+
+                <div class="filter-modal-step" id="filterHoldMoveThresholdsStep" style="display: none;">
+                    <div class="step-label">3. THRESHOLDS (% FROM PREV. CLOSE)</div>
+                    <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                        <div style="flex: 1; min-width: 130px;">
+                            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px;">Порог хода (≥ %):</label>
+                            <input type="number" id="filterHoldThresholdInput" class="filter-number-input" value="1.0" step="0.1" min="0.1" style="width: 100%;">
+                        </div>
+                        <div style="flex: 1; min-width: 130px;">
+                            <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px;">Мин. удержание (откат %):</label>
+                            <input type="number" id="filterHoldMinHoldInput" class="filter-number-input" value="0.90" step="0.05" min="0.0" style="width: 100%;">
+                        </div>
+                    </div>
+                    <div style="font-size: 10.5px; color: var(--text-muted); margin-top: 5px; line-height: 1.3;">
+                        Допускается шум (напр. 0.98%–0.90%), но не глубже мин. удержания.
+                    </div>
+                </div>
+
+                <div class="filter-modal-step" id="filterHoldMoveWindowStep" style="display: none;">
+                    <div class="step-label">4. КОГДА ДОСТИГАЕТ (TIME WINDOW)</div>
+                    <div class="step-options-row" id="filterHoldWindowOptions">
+                        <button type="button" class="filter-pill-btn active" data-window="any">Без разницы (Any)</button>
+                        <button type="button" class="filter-pill-btn" data-window="premarket">Премаркет (04:00 - 09:30)</button>
+                        <button type="button" class="filter-pill-btn" data-window="regular">Интрадей (09:30 - 16:00)</button>
+                        <button type="button" class="filter-pill-btn" data-window="postmarket">Постмаркет (16:00 - 20:00)</button>
+                    </div>
+                </div>
+
+                <div class="filter-modal-step" id="filterHoldMoveUntilStep" style="display: none;">
+                    <div class="step-label">5. УДЕРЖИВАТЬ ДО КЛЮЧЕВОГО ТАЙМИНГА (HOLD UNTIL)</div>
+                    <div class="step-options-row" id="filterHoldUntilOptions">
+                        <button type="button" class="filter-pill-btn active" data-until="09:30">09:30</button>
+                        <button type="button" class="filter-pill-btn" data-until="16:30">16:30</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="datalens-modal-footer">
+                <button type="button" id="filterModalDeleteBtn" class="modal-delete-btn" style="display: none;">DELETE</button>
+                <div class="footer-right-actions">
+                    <button type="button" id="filterModalCancelBtn" class="modal-cancel-btn">CANCEL</button>
+                    <button type="button" id="filterModalAddBtn" class="modal-add-btn">ADD</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals -->
+    <div id="bulkTickerModal" class="modal-backdrop" aria-hidden="true">
+        <div class="bulk-modal">
+            <div class="bulk-modal-header">
+                <div>
+                    <div class="eyebrow-section">BULK UNIVERSE IMPORT</div>
+                    <h2>Импорт списка тикеров (300+)</h2>
+                    <p>Вставьте список тикеров или тикеров с Custom Move % (напр. <code>COHR 4.0</code>, <code>AAPL -0.5%</code>, <code>NVDA</code>).</p>
+                </div>
+                <button id="closeBulkModal" class="modal-close" type="button">✕</button>
+            </div>
+
+            <div class="bulk-target-row">
+                <label for="bulkTargetGroup">Целевая группа:</label>
+                <select id="bulkTargetGroup"></select>
+            </div>
+
+            <div class="bulk-modal-body" style="margin-top: 10px;">
+                <textarea
+                    id="bulkTickerText"
+                    class="bulk-textarea"
+                    style="min-height: 180px;"
+                    placeholder="msft aapl nvda tsla amzn ...&#10;или с ходом: COHR 4.0 AAPL -0.5 NVDA 2.2"
+                ></textarea>
+            </div>
+
+            <div class="bulk-modal-footer">
+                <span id="bulkTotalCount">0 тикеров</span>
+                <div class="panel-header-actions">
+                    <button id="cancelBulkModal" class="secondary-button" type="button">Отмена</button>
+                    <button id="addBulkTickers" class="primary-small-button" type="button">Добавить к группе</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Correlation Matrix Bulk Tickers -->
+    <div id="corrBulkModal" class="modal-backdrop" aria-hidden="true">
+        <div class="bulk-modal" style="max-width: 540px;">
+            <div class="bulk-modal-header">
+                <div>
+                    <div class="eyebrow-section">МАТРИЦА КОРРЕЛЯЦИЙ & BETA</div>
+                    <h2>Добавить несколько тикеров</h2>
+                    <p>Вставьте список тикеров через запятую, пробел или с новой строки (например: <code>NVDA, MSFT, AMD, QCOM, TSM</code>).</p>
+                </div>
+                <button id="closeCorrBulkModal" class="modal-close" type="button">✕</button>
+            </div>
+
+            <div class="bulk-modal-body" style="margin-top: 10px;">
+                <textarea
+                    id="corrBulkTickerText"
+                    class="bulk-textarea"
+                    style="min-height: 160px;"
+                    placeholder="NVDA, MSFT, AMD&#10;QCOM, TSM, INTC&#10;ARM, MU, AVGO"
+                ></textarea>
+            </div>
+
+            <div class="bulk-modal-footer">
+                <span id="corrBulkTotalCount" style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Распознано: 0 тикеров</span>
+                <div class="panel-header-actions">
+                    <button id="cancelCorrBulkModal" class="secondary-button" type="button">Отмена</button>
+                    <button id="submitCorrBulkTickers" class="primary-small-button" type="button">Добавить в матрицу</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="app-footer">
+        <p>CHEPUH • Quantitative Asset Intelligence Platform</p>
+    </footer>
+
+    <!-- Global Floating Tooltip Element -->
+    <div id="globalTooltip" class="global-tooltip" style="display: none;">
+        <div id="tooltipTitle" class="tooltip-title"></div>
+        <div id="tooltipText" class="tooltip-text"></div>
+    </div>
+
+    <script src="/static/app.js?v=23.0"></script>
+</body>
+</html>
