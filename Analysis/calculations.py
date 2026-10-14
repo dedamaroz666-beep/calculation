@@ -20,38 +20,6 @@ PERIODS = {
 # PREPARE MULTI-ASSET RETURNS
 # ============================================================
 
-def adjust_series_for_splits(series: pd.Series) -> pd.Series:
-    """
-    Detects unadjusted stock splits (e.g. 2:1, 3:1, 4:1, 1:2, etc.) and adjusts
-    historical prices backwards so that pct_change() reflects true market return.
-    """
-    prices = series.values.copy()
-    n = len(prices)
-    if n < 2:
-        return series
-
-    cum_factor = 1.0
-    adjusted = np.zeros(n, dtype=float)
-    adjusted[-1] = prices[-1]
-
-    for i in range(n - 2, -1, -1):
-        p_prev = prices[i]
-        p_curr = prices[i + 1]
-        if p_curr > 0 and p_prev > 0:
-            ratio = p_prev / p_curr
-            for split in (2, 3, 4, 5, 7, 8, 10, 20):
-                if abs(ratio - split) / split < 0.08:
-                    cum_factor *= split
-                    break
-                rev_split = 1.0 / split
-                if abs(ratio - rev_split) / rev_split < 0.08:
-                    cum_factor *= rev_split
-                    break
-        adjusted[i] = p_prev / cum_factor
-
-    return pd.Series(adjusted, index=series.index)
-
-
 def prepare_multi_asset_returns(df, tickers):
     """
     Transforms multi-ticker OHLC/close data into a wide DataFrame of daily returns.
@@ -85,11 +53,8 @@ def prepare_multi_asset_returns(df, tickers):
     data = data.dropna(subset=["date", "close"])
     data = data.sort_values(["ticker", "date"])
 
-    # Adjust prices backwards for unadjusted stock splits
-    data["close_adj"] = data.groupby("ticker")["close"].transform(adjust_series_for_splits)
-
     # Calculate close-to-close returns per ticker
-    data["return"] = data.groupby("ticker")["close_adj"].pct_change()
+    data["return"] = data.groupby("ticker")["close"].pct_change()
 
     returns = (
         data.pivot(index="date", columns="ticker", values="return")

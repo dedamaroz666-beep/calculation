@@ -25,8 +25,7 @@ from database import (
     get_ticker_dividends_db,
     save_ticker_dividends_db,
     get_company_profile_db,
-    save_company_profile_db,
-    get_postgres_connection
+    save_company_profile_db
 )
 from calculations import (
     calculate_all_periods,
@@ -34,10 +33,9 @@ from calculations import (
 )
 from services.polygon_service import polygon_client
 from services.fmp_service import fmp_client
-from services.earnings_reaction_service import earnings_reaction_client, is_report_already_released, parse_earnings_session
+from services.earnings_reaction_service import earnings_reaction_client
 from services.quant_service import quant_client
 from services.earnings_extra_service import get_ticker_earnings_extra_map, find_matching_earnings_extra
-from services.datalens_service import calculate_hold_move_dates
 
 app = FastAPI(
     title="Helion Financial Analysis Platform",
@@ -222,45 +220,55 @@ async def api_daily_chart(ticker: str):
 
     # A. Earnings Markers ('E')
     seen_earnings_dates = set()
-    seen_candle_dates_list = []
     extra_map = get_ticker_earnings_extra_map(ticker)
-    db_reports_df = get_ticker_reports(ticker)
+    earnings_list = fmp_client.get_earnings_history(ticker, limit=30)
+    for earn in earnings_list:
+        raw_date = earn.get("date")
+        if not raw_date:
+            continue
+        c_date = find_nearest_candle_date(raw_date)
+        if not c_date or c_date in seen_earnings_dates:
+            continue
+        seen_earnings_dates.add(c_date)
+        m_id = f"e_{c_date}"
+        extra_info = find_matching_earnings_extra(extra_map, raw_date)
+        markers.append({
+            "time": c_date,
+            "position": "belowBar",
+            "color": "#10b981",
+            "shape": "square",
+            "text": "E",
+            "id": m_id
+        })
+        marker_details[m_id] = {
+            "type": "Earnings",
+            "date": c_date,
+            "session": str(earn.get("time", "AMC")).upper(),
+            "eps_actual": earn.get("eps_actual") if earn.get("eps_actual") is not None else (extra_info.get("eps_actual") if extra_info else None),
+            "eps_estimate": earn.get("eps_estimate") if earn.get("eps_estimate") is not None else (extra_info.get("eps_estimate") if extra_info else None),
+            "eps_surprise_pct": earn.get("eps_surprise_pct") if earn.get("eps_surprise_pct") is not None else (extra_info.get("eps_surprise_pct") if extra_info else None),
+            "revenue_actual": earn.get("revenue_actual") if earn.get("revenue_actual") is not None else (extra_info.get("revenue_actual") if extra_info else None),
+            "revenue_estimate": earn.get("revenue_estimate") if earn.get("revenue_estimate") is not None else (extra_info.get("revenue_estimate") if extra_info else None)
+        }
 
-    # 1. Primary source: PostgreSQL reports (Benzinga)
+    # Fallback to PostgreSQL reports if FMP has few/no earnings (e.g. non-AAPL tickers)
+    db_reports_df = get_ticker_reports(ticker)
     if not db_reports_df.empty:
         for _, r in db_reports_df.iterrows():
             raw_date = str(r["date"])
-            extra_info = find_matching_earnings_extra(extra_map, raw_date)
-            if not extra_info and r.get("move_date"):
-                extra_info = find_matching_earnings_extra(extra_map, str(r["move_date"]))
-            session_name = parse_earnings_session(r.get("time")).upper()
-            check_dict = {
-                "date": raw_date,
-                "time": session_name.lower(),
-                "eps_actual": extra_info.get("eps_actual") if extra_info else None,
-                "revenue_actual": extra_info.get("revenue_actual") if extra_info else None
-            }
-            if not is_report_already_released(check_dict):
-                continue
-
             c_date = find_nearest_candle_date(raw_date)
             if not c_date and r.get("move_date"):
                 c_date = find_nearest_candle_date(str(r["move_date"]))
-            if not c_date:
+            if not c_date or c_date in seen_earnings_dates:
                 continue
-
-            try:
-                d_c = datetime.date.fromisoformat(c_date)
-                if any(abs((d_c - prev_d).days) < 45 for prev_d in seen_candle_dates_list):
-                    continue
-                seen_candle_dates_list.append(d_c)
-            except Exception:
-                if c_date in seen_earnings_dates:
-                    continue
-
             seen_earnings_dates.add(c_date)
             m_id = f"e_{c_date}"
+            time_str = str(r.get("time", "")).lower()
+            session_name = "AMC" if "16:" in time_str or "amc" in time_str or "after" in time_str else "BMO"
             quarter_name = f"{r.get('fiscal_period', '')} {r.get('fiscal_year', '')}".strip()
+            extra_info = find_matching_earnings_extra(extra_map, raw_date)
+            if not extra_info and r.get("move_date"):
+                extra_info = find_matching_earnings_extra(extra_map, str(r["move_date"]))
 
             markers.append({
                 "time": c_date,
@@ -273,7 +281,7 @@ async def api_daily_chart(ticker: str):
             marker_details[m_id] = {
                 "type": "Earnings",
                 "date": c_date,
-                "session": session_name,
+                "session": (extra_info.get("time") if extra_info else None) or session_name,
                 "quarter": quarter_name,
                 "eps_actual": extra_info.get("eps_actual") if extra_info else None,
                 "eps_estimate": extra_info.get("eps_estimate") if extra_info else None,
@@ -281,56 +289,6 @@ async def api_daily_chart(ticker: str):
                 "revenue_actual": extra_info.get("revenue_actual") if extra_info else None,
                 "revenue_estimate": extra_info.get("revenue_estimate") if extra_info else None
             }
-
-    # 2. Fallback or supplementary: FMP reports (for missing tickers or unreleased future announcements)
-    earnings_list = fmp_client.get_earnings_history(ticker, limit=30)
-    for earn in earnings_list:
-        raw_date = earn.get("date")
-        if not raw_date:
-            continue
-        c_date = find_nearest_candle_date(raw_date)
-        if not c_date:
-            continue
-        try:
-            d_c = datetime.date.fromisoformat(c_date)
-            if any(abs((d_c - prev_d).days) < 45 for prev_d in seen_candle_dates_list):
-                continue
-            seen_candle_dates_list.append(d_c)
-        except Exception:
-            if c_date in seen_earnings_dates:
-                continue
-
-        extra_info = find_matching_earnings_extra(extra_map, raw_date)
-        session_name = parse_earnings_session(earn.get("time")).upper()
-        check_dict = {
-            "date": raw_date,
-            "time": session_name.lower(),
-            "eps_actual": earn.get("eps_actual") if earn.get("eps_actual") is not None else (extra_info.get("eps_actual") if extra_info else None),
-            "revenue_actual": earn.get("revenue_actual") if earn.get("revenue_actual") is not None else (extra_info.get("revenue_actual") if extra_info else None)
-        }
-        if not is_report_already_released(check_dict):
-            continue
-
-        seen_earnings_dates.add(c_date)
-        m_id = f"e_{c_date}"
-        markers.append({
-            "time": c_date,
-            "position": "belowBar",
-            "color": "#10b981",
-            "shape": "square",
-            "text": "E",
-            "id": m_id
-        })
-        marker_details[m_id] = {
-            "type": "Earnings",
-            "date": c_date,
-            "session": session_name,
-            "eps_actual": check_dict["eps_actual"],
-            "eps_estimate": earn.get("eps_estimate") if earn.get("eps_estimate") is not None else (extra_info.get("eps_estimate") if extra_info else None),
-            "eps_surprise_pct": earn.get("eps_surprise_pct") if earn.get("eps_surprise_pct") is not None else (extra_info.get("eps_surprise_pct") if extra_info else None),
-            "revenue_actual": check_dict["revenue_actual"],
-            "revenue_estimate": earn.get("revenue_estimate") if earn.get("revenue_estimate") is not None else (extra_info.get("revenue_estimate") if extra_info else None)
-        }
 
     # B. Dividends Markers ('D')
     seen_dividend_dates = set()
@@ -375,11 +333,11 @@ async def api_daily_chart(ticker: str):
 async def api_intraday_chart(
     ticker: str,
     date: Optional[str] = None,
-    multiplier: int = Query(1, ge=1, le=60),
+    multiplier: int = Query(5, ge=1, le=60),
     days_back: int = Query(30, ge=1, le=90)
 ):
     """
-    Returns continuous multi-day 1m (or custom multiplier) intraday candlestick series around the requested date,
+    Returns continuous multi-day 5m (or 1m) intraday candlestick series around the requested date,
     allowing full scrolling to yesterday, day before, today, and future days.
     """
     ticker = ticker.strip().upper()
@@ -403,55 +361,25 @@ async def api_intraday_chart(
     if not df.empty:
         # Sort chronologically by date and time
         df = df.sort_values(["date", "time"])
-        if multiplier > 1:
+        for _, r in df.iterrows():
+            dt_str = f"{r['date']} {r['time']}"
             try:
-                df["_dt"] = pd.to_datetime(df["datetime_et"])
-                df = df.set_index("_dt")
-                agg_dict = {
-                    "open": "first",
-                    "high": "max",
-                    "low": "min",
-                    "close": "last",
-                    "volume": "sum",
-                    "session_type": "first",
-                    "date": "first",
-                    "ticker": "first"
-                }
-                resampled = df.resample(f"{multiplier}min").agg(agg_dict).dropna(subset=["close"]).reset_index()
-                resampled["time_str"] = resampled["_dt"].dt.strftime("%H:%M")
-                resampled["time"] = resampled["_dt"].dt.strftime("%H:%M:%S")
-                resampled["datetime_et"] = resampled["_dt"]
-                df = resampled
-            except Exception as ex:
-                print(f"[Intraday] Resample error for {ticker}: {ex}")
-                if "_dt" in df.columns:
-                    df = df.reset_index(drop=True)
-
-        df["dt_str"] = df["date"].astype(str) + " " + df["time"].astype(str)
-        try:
-            dt_series = pd.to_datetime(df["datetime_et"])
-            unit = getattr(dt_series.dtype, "unit", "us")
-            divisor = 10**9 if unit == "ns" else (10**6 if unit == "us" else (10**3 if unit == "ms" else 1))
-            ts_series = (dt_series.astype("int64") // divisor).astype(int)
-        except Exception:
-            dt_series = pd.to_datetime(df["dt_str"])
-            unit = getattr(dt_series.dtype, "unit", "us")
-            divisor = 10**9 if unit == "ns" else (10**6 if unit == "us" else (10**3 if unit == "ms" else 1))
-            ts_series = (dt_series.astype("int64") // divisor).astype(int)
-        df["timestamp"] = ts_series
-        df["open"] = df["open"].astype(float)
-        df["high"] = df["high"].astype(float)
-        df["low"] = df["low"].astype(float)
-        df["close"] = df["close"].astype(float)
-        df["volume"] = df["volume"].astype(float)
-        df["date"] = df["date"].astype(str)
-        if "session_type" not in df.columns:
-            df["session_type"] = "regular"
-
-        candles = df[[
-            "dt_str", "timestamp", "date", "time_str",
-            "open", "high", "low", "close", "volume", "session_type"
-        ]].rename(columns={"dt_str": "time"}).to_dict("records")
+                dt_obj = datetime.datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+                ts = int(dt_obj.replace(tzinfo=datetime.timezone.utc).timestamp())
+            except Exception:
+                ts = None
+            candles.append({
+                "time": dt_str,
+                "timestamp": ts,
+                "date": str(r["date"]),
+                "time_str": r["time_str"],
+                "open": float(r["open"]),
+                "high": float(r["high"]),
+                "low": float(r["low"]),
+                "close": float(r["close"]),
+                "volume": float(r["volume"]),
+                "session_type": r.get("session_type", "regular")
+            })
     else:
         # Fallback to Polygon
         poly_bars = polygon_client.fetch_intraday_bars(
@@ -719,387 +647,6 @@ async def api_correlations(
     return result
 
 
-@app.post("/api/ticker/{ticker}/correlations/export")
-async def export_correlations_matrix(ticker: str, request: Request):
-    """
-    Exports the Correlation and Beta Matrix table to a styled Excel spreadsheet (.xlsx).
-    """
-    ticker = ticker.strip().upper()
-    data = await request.json() or {}
-    rows = data.get("rows", [])
-    period = str(data.get("period", "1y"))
-    target_move = data.get("target_move", 2.0)
-
-    if not rows:
-        raise HTTPException(status_code=400, detail="Нет данных для экспорта.")
-
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = f"{ticker} Correlations"
-
-    # Title row
-    ws.merge_cells("A1:K1")
-    title_cell = ws["A1"]
-    title_cell.value = f"CHEPUH / FinWhale • Матрица корреляций и коэффициентов Beta: {ticker} (Горизонт: {period})"
-    title_cell.font = Font(name="Calibri", size=12, bold=True, color="1E293B")
-    title_cell.alignment = Alignment(horizontal="left", vertical="center")
-    ws.row_dimensions[1].height = 26
-
-    header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
-    header_font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
-    header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    border_thin = Side(border_style="thin", color="CBD5E1")
-    cell_border = Border(left=border_thin, right=border_thin, top=border_thin, bottom=border_thin)
-
-    pos_fill = PatternFill(start_color="E8F5E9", end_color="E8F5E9", fill_type="solid")
-    pos_font = Font(name="Calibri", size=10, color="1B5E20", bold=True)
-    neg_fill = PatternFill(start_color="FFEBEE", end_color="FFEBEE", fill_type="solid")
-    neg_font = Font(name="Calibri", size=10, color="B71C1C", bold=True)
-    regular_font = Font(name="Calibri", size=10, color="000000")
-    bold_font = Font(name="Calibri", size=10, bold=True, color="000000")
-
-    headers = [
-        "Тикер",
-        "Тип",
-        "Корреляция",
-        "Beta",
-        "Ход аналога (Move %)",
-        f"Где должен стоять {ticker} (%)",
-        f"Ход {ticker} (%)",
-        "Разница (Diff %)",
-        "Normalized (σ)",
-        "Наблюдений (дн.)",
-        "Статус истории"
-    ]
-
-    ws.append(headers)
-    ws.row_dimensions[2].height = 24
-
-    for col_idx in range(1, len(headers) + 1):
-        c = ws.cell(row=2, column=col_idx)
-        c.fill = header_fill
-        c.font = header_font
-        c.alignment = header_alignment
-        c.border = cell_border
-
-    # Beta fills matching Photo 1 palette
-    beta_neg_fill = PatternFill(start_color="FECACA", end_color="FECACA", fill_type="solid")
-    beta_neg_font = Font(name="Calibri", size=10, color="991B1B", bold=True)
-    beta_low_fill = PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid")
-    beta_low_font = Font(name="Calibri", size=10, color="78350F", bold=False)
-    beta_neutral_fill = PatternFill(start_color="BFDBFE", end_color="BFDBFE", fill_type="solid")
-    beta_neutral_font = Font(name="Calibri", size=10, color="1E3A8A", bold=True)
-    beta_high_fill = PatternFill(start_color="BBF7D0", end_color="BBF7D0", fill_type="solid")
-    beta_high_font = Font(name="Calibri", size=10, color="14532D", bold=True)
-
-    # Correlation fills matching light-to-grey gradient
-    corr_high_fill = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
-    corr_high_font = Font(name="Calibri", size=10, color="166534", bold=True)
-    corr_med_fill = PatternFill(start_color="E8F5E9", end_color="E8F5E9", fill_type="solid")
-    corr_med_font = Font(name="Calibri", size=10, color="2E7D32")
-    corr_slate_fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
-    corr_slate_font = Font(name="Calibri", size=10, color="475569")
-    corr_grey_fill = PatternFill(start_color="E2E8F0", end_color="E2E8F0", fill_type="solid")
-    corr_grey_font = Font(name="Calibri", size=10, color="64748B")
-
-    current_row = 3
-    for r in rows:
-        sym = str(r.get("symbol", "")).strip().upper()
-        t_type = str(r.get("type", "Peer"))
-        corr = r.get("correlation")
-        beta = r.get("beta")
-        peer_move = r.get("_peerMove", r.get("peer_move", 1.0))
-        exp_move = r.get("_expMove", r.get("expected_move"))
-        t_move = r.get("_targetMove", r.get("target_move", target_move))
-        diff = r.get("_diff", r.get("diff"))
-        norm_diff = r.get("_normDiff", r.get("normalized"))
-        obs = r.get("observations")
-        is_partial = bool(r.get("is_partial", False))
-        part_reason = r.get("partial_reason") or ("Меньше горизонта" if is_partial else "Полная история")
-
-        ws.append([
-            sym,
-            t_type,
-            round(float(corr), 4) if (corr is not None and not (isinstance(corr, float) and np.isnan(corr))) else None,
-            round(float(beta), 4) if (beta is not None and not (isinstance(beta, float) and np.isnan(beta))) else None,
-            round(float(peer_move), 2) if (peer_move is not None and not (isinstance(peer_move, float) and np.isnan(peer_move))) else None,
-            round(float(exp_move), 2) if (exp_move is not None and not (isinstance(exp_move, float) and np.isnan(exp_move))) else None,
-            round(float(t_move), 2) if (t_move is not None and not (isinstance(t_move, float) and np.isnan(t_move))) else None,
-            round(float(diff), 2) if (diff is not None and not (isinstance(diff, float) and np.isnan(diff))) else None,
-            round(float(norm_diff), 2) if (norm_diff is not None and not (isinstance(norm_diff, float) and np.isnan(norm_diff))) else None,
-            int(obs) if (obs is not None and not (isinstance(obs, float) and np.isnan(obs))) else None,
-            part_reason
-        ])
-
-        ws.row_dimensions[current_row].height = 20
-
-        # Style cells
-        for c_idx in range(1, len(headers) + 1):
-            cell = ws.cell(row=current_row, column=c_idx)
-            cell.border = cell_border
-            cell.font = regular_font
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-
-        # Symbol bold
-        ws.cell(row=current_row, column=1).font = bold_font
-
-        # Correlation formatting with gradient-fill (higher = lighter, lower = grey)
-        c_cell = ws.cell(row=current_row, column=3)
-        if corr is not None and not (isinstance(corr, float) and np.isnan(corr)):
-            c_val = float(corr)
-            c_cell.number_format = "+0.000;-0.000;0.000"
-            if c_val >= 0.70:
-                c_cell.fill = corr_high_fill
-                c_cell.font = corr_high_font
-            elif c_val >= 0.40:
-                c_cell.fill = corr_med_fill
-                c_cell.font = corr_med_font
-            elif c_val >= 0.10:
-                c_cell.fill = corr_slate_fill
-                c_cell.font = corr_slate_font
-            elif c_val >= -0.10:
-                c_cell.fill = corr_grey_fill
-                c_cell.font = corr_grey_font
-            else:
-                c_cell.fill = neg_fill
-                c_cell.font = neg_font
-
-        # Beta formatting with conditional fill matching Photo 1
-        b_cell = ws.cell(row=current_row, column=4)
-        if beta is not None and not (isinstance(beta, float) and np.isnan(beta)):
-            b_val = float(beta)
-            b_cell.number_format = "0.000"
-            if b_val < 0:
-                b_cell.fill = beta_neg_fill
-                b_cell.font = beta_neg_font
-            elif b_val < 0.85:
-                b_cell.fill = beta_low_fill
-                b_cell.font = beta_low_font
-            elif b_val <= 1.15:
-                b_cell.fill = beta_neutral_fill
-                b_cell.font = beta_neutral_font
-            else:
-                b_cell.fill = beta_high_fill
-                b_cell.font = beta_high_font
-
-        # Diff formatting with fill
-        d_cell = ws.cell(row=current_row, column=8)
-        if diff is not None and not (isinstance(diff, float) and np.isnan(diff)):
-            d_val = float(diff)
-            d_cell.number_format = "+0.00;-0.00;0.00"
-            if d_val > 0.001:
-                d_cell.fill = pos_fill
-                d_cell.font = pos_font
-            elif d_val < -0.001:
-                d_cell.fill = neg_fill
-                d_cell.font = neg_font
-
-        # Partial row warning in Excel
-        if is_partial:
-            part_cell = ws.cell(row=current_row, column=11)
-            part_cell.font = Font(name="Calibri", size=9, color="B45309", bold=True)
-            part_cell.fill = PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid")
-
-        current_row += 1
-
-    # Auto column width
-    for col in ws.columns:
-        max_len = 0
-        col_letter = get_column_letter(col[0].column)
-        for cell in col:
-            val_str = str(cell.value or "")
-            if cell.row == 1:
-                continue
-            max_len = max(max_len, len(val_str))
-        ws.column_dimensions[col_letter].width = max(max_len + 4, 12)
-
-    output = io.BytesIO()
-    wb.save(output)
-    output.seek(0)
-    filename = f"{ticker}_correlation_matrix_{period}.xlsx"
-    headers_resp = {"Content-Disposition": f'attachment; filename="{filename}"'}
-    return Response(
-        content=output.getvalue(),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers=headers_resp
-    )
-
-
-@app.post("/api/matrix/export")
-async def export_general_matrix(request: Request):
-    """
-    Exports Matrix Correlation Pearson or Matrix Beta (formul Slope) to styled Excel (.xlsx).
-    """
-    data = await request.json() or {}
-    m_type = str(data.get("type", "correlation")).lower()
-    title = str(data.get("title", "Matrix Export"))
-    period = str(data.get("period", "1y"))
-    symbols = data.get("symbols", [])
-    matrix = data.get("matrix", {})
-
-    if not symbols:
-        raise HTTPException(status_code=400, detail="Нет данных для экспорта.")
-
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Beta Matrix" if m_type == "beta" else "Correlation Matrix"
-
-    # Title row
-    last_col_letter = get_column_letter(len(symbols) + 1)
-    ws.merge_cells(f"A1:{last_col_letter}1")
-    title_cell = ws["A1"]
-    title_cell.value = f"CHEPUH / FinWhale • {title} (Горизонт: {period})"
-    title_cell.font = Font(name="Calibri", size=12, bold=True, color="1E293B")
-    title_cell.alignment = Alignment(horizontal="left", vertical="center")
-    ws.row_dimensions[1].height = 26
-
-    # Headers
-    header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
-    header_font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
-    header_alignment = Alignment(horizontal="center", vertical="center")
-    border_thin = Side(border_style="thin", color="CBD5E1")
-    cell_border = Border(left=border_thin, right=border_thin, top=border_thin, bottom=border_thin)
-
-    headers = ["Тикер"] + [str(s).upper() for s in symbols]
-    ws.append(headers)
-    ws.row_dimensions[2].height = 24
-
-    for col_idx in range(1, len(headers) + 1):
-        c = ws.cell(row=2, column=col_idx)
-        c.fill = header_fill
-        c.font = header_font
-        c.alignment = header_alignment
-        c.border = cell_border
-
-    # Palette definitions
-    # Beta palette (matching user photo)
-    beta_neg_fill = PatternFill(start_color="FECACA", end_color="FECACA", fill_type="solid")
-    beta_neg_font = Font(name="Calibri", size=10, color="991B1B", bold=True)
-    beta_low_fill = PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid")
-    beta_low_font = Font(name="Calibri", size=10, color="78350F", bold=False)
-    beta_neutral_fill = PatternFill(start_color="BFDBFE", end_color="BFDBFE", fill_type="solid")
-    beta_neutral_font = Font(name="Calibri", size=10, color="1E3A8A", bold=True)
-    beta_high_fill = PatternFill(start_color="BBF7D0", end_color="BBF7D0", fill_type="solid")
-    beta_high_font = Font(name="Calibri", size=10, color="14532D", bold=True)
-
-    # Correlation palette (lighter for high, grey for low)
-    corr_high_fill = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
-    corr_high_font = Font(name="Calibri", size=10, color="166534", bold=True)
-    corr_med_fill = PatternFill(start_color="E8F5E9", end_color="E8F5E9", fill_type="solid")
-    corr_med_font = Font(name="Calibri", size=10, color="2E7D32")
-    corr_slate_fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
-    corr_slate_font = Font(name="Calibri", size=10, color="475569")
-    corr_grey_fill = PatternFill(start_color="E2E8F0", end_color="E2E8F0", fill_type="solid")
-    corr_grey_font = Font(name="Calibri", size=10, color="64748B")
-    corr_neg_fill = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
-    corr_neg_font = Font(name="Calibri", size=10, color="991B1B", bold=True)
-
-    regular_font = Font(name="Calibri", size=10, color="000000")
-    ticker_font = Font(name="Calibri", size=10, bold=True, color="1E293B")
-
-    current_row = 3
-    for row_sym in symbols:
-        row_vals = [row_sym]
-        for col_sym in symbols:
-            if row_sym == col_sym:
-                diag_val = matrix.get(row_sym, {}).get(col_sym) if matrix else 1.0
-                if diag_val is not None and not (isinstance(diag_val, float) and np.isnan(diag_val)):
-                    row_vals.append(round(float(diag_val), 3))
-                elif not matrix:
-                    row_vals.append(1.0)
-                else:
-                    row_vals.append(None)
-            else:
-                v = matrix.get(row_sym, {}).get(col_sym)
-                if v is not None and not (isinstance(v, float) and np.isnan(v)):
-                    row_vals.append(round(float(v), 3))
-                else:
-                    row_vals.append(None)
-        ws.append(row_vals)
-        ws.row_dimensions[current_row].height = 20
-
-        # Style row
-        for c_idx in range(1, len(headers) + 1):
-            cell = ws.cell(row=current_row, column=c_idx)
-            cell.border = cell_border
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-
-            if c_idx == 1:
-                cell.font = ticker_font
-                continue
-
-            val = cell.value
-            if val is None:
-                cell.font = Font(name="Calibri", size=10, color="94A3B8")
-                cell.value = "—"
-                continue
-
-            cell.number_format = "0.000" if m_type == "beta" else "+0.000;-0.000;0.000"
-
-            if row_sym == symbols[c_idx - 2]:
-                if m_type == "beta":
-                    cell.fill = beta_neutral_fill
-                    cell.font = beta_neutral_font
-                else:
-                    cell.fill = corr_high_fill
-                    cell.font = corr_high_font
-                continue
-
-            num = float(val)
-            if m_type == "beta":
-                if num < 0:
-                    cell.fill = beta_neg_fill
-                    cell.font = beta_neg_font
-                elif num < 0.85:
-                    cell.fill = beta_low_fill
-                    cell.font = beta_low_font
-                elif num <= 1.15:
-                    cell.fill = beta_neutral_fill
-                    cell.font = beta_neutral_font
-                else:
-                    cell.fill = beta_high_fill
-                    cell.font = beta_high_font
-            else:
-                if num >= 0.70:
-                    cell.fill = corr_high_fill
-                    cell.font = corr_high_font
-                elif num >= 0.40:
-                    cell.fill = corr_med_fill
-                    cell.font = corr_med_font
-                elif num >= 0.10:
-                    cell.fill = corr_slate_fill
-                    cell.font = corr_slate_font
-                elif num >= -0.10:
-                    cell.fill = corr_grey_fill
-                    cell.font = corr_grey_font
-                else:
-                    cell.fill = corr_neg_fill
-                    cell.font = corr_neg_font
-
-        current_row += 1
-
-    # Widths
-    for col in ws.columns:
-        max_len = 0
-        col_letter = get_column_letter(col[0].column)
-        for cell in col:
-            if cell.row == 1:
-                continue
-            max_len = max(max_len, len(str(cell.value or "")))
-        ws.column_dimensions[col_letter].width = max(max_len + 4, 11)
-
-    output = io.BytesIO()
-    wb.save(output)
-    output.seek(0)
-    clean_title = re.sub(r'[^a-zA-Z0-9_-]', '_', title).strip('_')
-    filename = f"{clean_title}_{period}.xlsx"
-    return Response(
-        content=output.getvalue(),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
-    )
-
-
 # ============================================================
 # DIVIDENDS HISTORY
 # ============================================================
@@ -1153,258 +700,6 @@ async def api_sync_ticker(ticker: str):
         "dividends": len(divs),
         "peers": prof["peers"]
     }
-
-
-# ============================================================
-# DATALENS ENDPOINTS
-# ============================================================
-
-@app.get("/api/datalens/data")
-async def api_datalens_data(
-    tickers: str = Query("SPY,QQQ,MU"),
-    period: str = Query("1y"),
-    start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None)
-):
-    """
-    Returns daily percentage changes (cls2cls, intra, gap) and event markers
-    (Earnings, Ex-Div, Pay Date) for the requested tickers over the chosen period.
-    """
-    try:
-        if not isinstance(start_date, str):
-            start_date = None
-        if not isinstance(end_date, str):
-            end_date = None
-        if not isinstance(tickers, str):
-            tickers = "SPY,QQQ,MU"
-        if not isinstance(period, str):
-            period = "1y"
-
-        raw_list = [t.strip().upper() for t in re.split(r"[\s,;]+", tickers) if t.strip()]
-        clean_tickers = list(dict.fromkeys(raw_list))
-        if not clean_tickers:
-            clean_tickers = ["SPY", "QQQ", "MU"]
-
-        df = get_stock_data(*clean_tickers)
-        if df is None or df.empty:
-            return {
-                "status": "ok",
-                "as_of": datetime.date.today().isoformat(),
-                "tickers": clean_tickers,
-                "dates": [],
-                "data": {}
-            }
-
-        df["date_str"] = df["date"].dt.strftime("%Y-%m-%d")
-
-        # Calculate Intra% = (close - open) / open * 100
-        df["intra"] = np.where(df["open"] > 0, (df["close"] - df["open"]) / df["open"] * 100.0, 0.0)
-
-        # Date filtering
-        all_dates = sorted(df["date_str"].unique())
-        if not all_dates:
-            return {"status": "ok", "as_of": "", "tickers": clean_tickers, "dates": [], "data": {}}
-
-        latest_date_str = all_dates[-1]
-        latest_date = pd.to_datetime(latest_date_str)
-
-        if start_date and end_date:
-            df = df[(df["date_str"] >= start_date) & (df["date_str"] <= end_date)]
-        elif start_date:
-            df = df[df["date_str"] >= start_date]
-        else:
-            p = period.lower().strip()
-            if p == "1w":
-                cutoff = latest_date - pd.Timedelta(days=7)
-            elif p == "1m":
-                cutoff = latest_date - pd.Timedelta(days=30)
-            elif p == "3m":
-                cutoff = latest_date - pd.Timedelta(days=91)
-            elif p == "6m":
-                cutoff = latest_date - pd.Timedelta(days=182)
-            elif p == "ytd":
-                cutoff = pd.Timestamp(year=latest_date.year, month=1, day=1)
-            elif p == "1y":
-                cutoff = latest_date - pd.Timedelta(days=365)
-            elif p == "2y":
-                cutoff = latest_date - pd.Timedelta(days=730)
-            elif p == "5y":
-                cutoff = latest_date - pd.Timedelta(days=1825)
-            elif p == "max":
-                cutoff = None
-            else:
-                cutoff = latest_date - pd.Timedelta(days=365)
-
-            if cutoff is not None:
-                cutoff_str = cutoff.strftime("%Y-%m-%d")
-                df = df[df["date_str"] >= cutoff_str]
-
-        # Build ticker trading dates mapping (unsliced for boundary lookups)
-        ticker_trading_dates = {}
-        for sym in clean_tickers:
-            sym_df = df[df["ticker"] == sym]
-            if not sym_df.empty:
-                ticker_trading_dates[sym] = sorted(sym_df["date_str"].unique())
-
-        # Fetch earnings events with R-1, R, R+1, R+2 offsets
-        earnings_offsets_map = {}
-        earnings_r_set = set()
-        try:
-            conn = get_postgres_connection()
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT UPPER(t.ticker), r.date::text, r.move_date::text, r.time::text
-                    FROM reports r
-                    JOIN ticker t ON t.id = r.id_ticker
-                    WHERE UPPER(t.ticker) = ANY(%s)
-                    ORDER BY r.date ASC;
-                """, (clean_tickers,))
-                for row in cur.fetchall():
-                    sym, r_d, m_d, r_time = row
-                    dates = ticker_trading_dates.get(sym, [])
-                    if not dates:
-                        continue
-
-                    R = m_d or r_d
-                    time_str = str(r_time or "").lower()
-                    is_amc = any(x in time_str for x in ["16:", "17:", "18:", "19:", "20:", "pm", "amc", "after"])
-
-                    if R in dates:
-                        r_idx = dates.index(R)
-                        earnings_offsets_map.setdefault((sym, dates[r_idx]), set()).add("R")
-                        earnings_r_set.add((sym, dates[r_idx]))
-                        if r_idx > 0:
-                            earnings_offsets_map.setdefault((sym, dates[r_idx - 1]), set()).add("R-1")
-                        if r_idx + 1 < len(dates):
-                            earnings_offsets_map.setdefault((sym, dates[r_idx + 1]), set()).add("R+1")
-                        if r_idx + 2 < len(dates):
-                            earnings_offsets_map.setdefault((sym, dates[r_idx + 2]), set()).add("R+2")
-                    elif r_d in dates:
-                        r_d_idx = dates.index(r_d)
-                        if is_amc:
-                            earnings_offsets_map.setdefault((sym, dates[r_d_idx]), set()).add("R-1")
-                            if r_d_idx + 1 < len(dates):
-                                earnings_offsets_map.setdefault((sym, dates[r_d_idx + 1]), set()).add("R")
-                                earnings_r_set.add((sym, dates[r_d_idx + 1]))
-                        else:
-                            earnings_offsets_map.setdefault((sym, dates[r_d_idx]), set()).add("R")
-                            earnings_r_set.add((sym, dates[r_d_idx]))
-                            if r_d_idx > 0:
-                                earnings_offsets_map.setdefault((sym, dates[r_d_idx - 1]), set()).add("R-1")
-                            if r_d_idx + 1 < len(dates):
-                                earnings_offsets_map.setdefault((sym, dates[r_d_idx + 1]), set()).add("R+1")
-                            if r_d_idx + 2 < len(dates):
-                                earnings_offsets_map.setdefault((sym, dates[r_d_idx + 2]), set()).add("R+2")
-        except Exception as e:
-            print("[DataLens] Earnings fetch error:", e)
-
-        # Fetch dividend events (ex-date, pay-date)
-        ex_div_set = set()
-        pay_date_set = set()
-        try:
-            import sqlite3
-            from config import CACHE_DB_PATH
-            if os.path.exists(CACHE_DB_PATH):
-                with sqlite3.connect(CACHE_DB_PATH) as s_conn:
-                    s_cur = s_conn.cursor()
-                    q_marks = ",".join(["?"] * len(clean_tickers))
-                    s_cur.execute(f"SELECT UPPER(ticker), ex_date, pay_date FROM dividends WHERE UPPER(ticker) IN ({q_marks})", clean_tickers)
-                    for row in s_cur.fetchall():
-                        t_sym, ex_d, pay_d = row
-                        if ex_d: ex_div_set.add((t_sym, ex_d))
-                        if pay_d: pay_date_set.add((t_sym, pay_d))
-        except Exception as e:
-            print("[DataLens] Dividends fetch error:", e)
-
-        # Build data dictionary by date
-        data_by_date = {}
-        for _, r in df.iterrows():
-            d_str = r["date_str"]
-            sym = r["ticker"]
-            if d_str not in data_by_date:
-                data_by_date[d_str] = {}
-
-            cls2cls_val = round(float(r["cls2cls"]), 2) if pd.notnull(r["cls2cls"]) else None
-            intra_val = round(float(r["intra"]), 2) if pd.notnull(r["intra"]) else None
-            gap_val = round(float(r["gap"]), 2) if pd.notnull(r["gap"]) else None
-            close_val = round(float(r["close"]), 2) if pd.notnull(r["close"]) else None
-            prev_close_val = round(float(r["prev_close"]), 2) if pd.notnull(r["prev_close"]) else None
-
-            data_by_date[d_str][sym] = {
-                "close": close_val,
-                "prev_close": prev_close_val,
-                "cls2cls": cls2cls_val,
-                "intra": intra_val,
-                "gap": gap_val,
-                "is_earnings": (sym, d_str) in earnings_r_set,
-                "earnings_offsets": sorted(list(earnings_offsets_map.get((sym, d_str), set()))),
-                "is_ex_div": (sym, d_str) in ex_div_set,
-                "is_pay_date": (sym, d_str) in pay_date_set
-            }
-
-        dates_sorted = sorted(list(data_by_date.keys()), reverse=True)
-
-        return {
-            "status": "ok",
-            "as_of": latest_date_str,
-            "tickers": clean_tickers,
-            "dates": dates_sorted,
-            "data": data_by_date
-        }
-    except Exception as e:
-        print("[DataLens] api_datalens_data error:", e)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/datalens/filter/hold-move")
-async def api_datalens_hold_move_filter(
-    ticker: str = Query("MU"),
-    period: str = Query("1y"),
-    start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None),
-    threshold_pct: float = Query(1.0, ge=0.01, le=50.0),
-    min_hold_pct: float = Query(0.90, ge=0.0, le=50.0),
-    direction: str = Query("both"),
-    window: str = Query("any"),
-    hold_until: str = Query("09:30")
-):
-    """
-    Calculates and returns trading dates where the specified ticker achieved at least
-    `threshold_pct` move from prev_close during `window`, and held at least `min_hold_pct`
-    until `hold_until` (09:30 OPG or 16:30).
-    """
-    try:
-        matching_dates = calculate_hold_move_dates(
-            ticker=ticker,
-            period=period,
-            start_date=start_date,
-            end_date=end_date,
-            threshold_pct=threshold_pct,
-            min_hold_pct=min_hold_pct,
-            direction=direction,
-            window=window,
-            hold_until=hold_until
-        )
-        return {
-            "status": "ok",
-            "ticker": ticker.upper().strip(),
-            "matching_dates": matching_dates,
-            "count": len(matching_dates),
-            "params": {
-                "period": period,
-                "start_date": start_date,
-                "end_date": end_date,
-                "threshold_pct": threshold_pct,
-                "min_hold_pct": min_hold_pct,
-                "direction": direction,
-                "window": window,
-                "hold_until": hold_until
-            }
-        }
-    except Exception as e:
-        print(f"[DataLens] api_datalens_hold_move_filter error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 
 # ============================================================
